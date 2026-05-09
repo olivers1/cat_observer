@@ -7,12 +7,13 @@ import adafruit_mcp3xxx.mcp3008 as MCP
 from adafruit_mcp3xxx.analog_in import AnalogIn
 import pwmio
 from enum import Enum
-import numpy as np
+#import numpy as np
 import logging
 from logging.handlers import RotatingFileHandler
 import mariadb
 import sys
 from secrets import db_user, db_password, db_name
+from collections import deque
 
 
 # IO-pin setup for IR-leds with pwm output signal
@@ -67,21 +68,32 @@ class IrSensor:
 
 
 class SensorHandler:
-    def __init__(self, num_sensors: int, num_sample_columns: int, num_consecutive_trigs: int):
+    def __init__(self, num_sensors: int, max_samples: int, num_consecutive_trigs: int):
         self.num_sensors = num_sensors
-        self.num_sample_columns = num_sample_columns
+        self.max_samples = max_samples
         self.num_consecutive_trigs = num_consecutive_trigs
         self.trig_threshold = 1000  # a digital value (0 - 65535) to represent a threshold for a trigged/blocked sensor
         
-        self.sensors = []   # create sensors and store in a list
-        for i in range(self.num_sensors):
-            self.sensors.append(f"sensor{i}")
-            self.sensors[i] = IrSensor(i, self.trig_threshold)
+        self.sensors = [    # create sensors and store in a list
+            IrSensor(sensor_id, self.trig_threshold)
+            for sensor_id in range(self.num_sensors)
+        ]
+
+        self.sensor_sample_logs = deque(maxlen=self.max_samples)    # logs to store sensor samples in deque list
+
+    def register_sample(self, samples):
+        self.sensor_sample_logs.append(samples)
 
 
-"""
+
 test = SensorHandler(2, 3, 5)
 
-for sensor in test.sensors:
-    print(sensor.get_sensor_data()[0])
-"""
+for _ in range(2):
+    row = []
+    for sensor in test.sensors:
+        row.append(sensor.get_sensor_data())
+    
+    test.register_sample(row)
+
+print(test.sensor_sample_logs)
+
