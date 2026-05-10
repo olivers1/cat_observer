@@ -25,6 +25,7 @@ spi = busio.SPI(clock=board.SCK, MISO=board.MISO, MOSI=board.MOSI)  # create the
 cs = digitalio.DigitalInOut(board.D8)   # create the cs (chip select)
 mcp = MCP.MCP3008(spi, cs)  # create a mcp object
 
+NUM_SENSORS = 2
 
 class SensorTrigState(Enum):
     NO_TRIG = 0
@@ -48,52 +49,106 @@ class SensorSample:
     
 
 class IrSensor:
-    def __init__(self, mcp_channel :int, trig_threshold: int):
+    def __init__(self, mcp_channel :int, sensor_trig_threshold: int):
         self.mcp_channel = mcp_channel
-        self.trig_threshold = trig_threshold
-        self.sensor = AnalogIn(mcp, self.mcp_channel)
+        self.sensor_trig_threshold = sensor_trig_threshold
         
     def get_sensor_data(self):
         # read sensor value and timestamp
-        value = self.sensor.value
+        sensor_read = AnalogIn(mcp, self.mcp_channel)
+        value = sensor_read.value
         timestamp = round(time.time()*1000)
         
-        # evaluate readout value to determine if sensor is trigged
-        trig_state = SensorTrigState.UNKNOWN    # default value
-        if(value < self.trig_threshold):    # detect any sensor trig. value is below threshold = TRIG, value is above threshold = NO_TRIG
-            trig_state = SensorTrigState.TRIG   # trig detected
+        # evaluate readout value to determine if sensor was trigged (blocked)
+        trig_state = SensorTrigState.UNKNOWN
+        if(value < self.sensor_trig_threshold):     # detect sensor trig. below threshold == trig, above threshold = no trig
+            trig_state = SensorTrigState.TRIG       # trig detected
         else:
             trig_state = SensorTrigState.NO_TRIG    # no trig detected
         return value, timestamp, trig_state
 
 
 class SensorHandler:
-    def __init__(self, num_sensors: int, max_samples: int, num_consecutive_trigs: int):
-        self.num_sensors = num_sensors
+    def __init__(self, max_samples: int, num_consecutive_trigs: int):
         self.max_samples = max_samples
         self.num_consecutive_trigs = num_consecutive_trigs
-        self.trig_threshold = 1000  # a digital value (0 - 65535) to represent a threshold for a trigged/blocked sensor
+        self.trig_threshold = 1000  # a digital value (0 - 65535) to represent the threshold for a trigged/blocked sensor
         
         self.sensors = [    # create sensors and store in a list
             IrSensor(sensor_id, self.trig_threshold)
-            for sensor_id in range(self.num_sensors)
+            for sensor_id in range(NUM_SENSORS)
         ]
 
-        self.sensor_sample_logs = deque(maxlen=self.max_samples)    # logs to store sensor samples in deque list
+        self.logs = deque(maxlen=self.max_samples)    # logs to store sensor samples in deque list
+        """
+        self.logs = deque(   # logs to store sensor samples in deque list
+            [
+                [SensorSample() for _ in range(NUM_SENSORS)]
+                for _ in range(self.max_samples)
+            ],
+            maxlen=self.max_samples)   
+        """
 
-    def register_sample(self, samples):
-        self.sensor_sample_logs.append(samples)
+    def register_log_sample(self, row):
+        self.row = row
+        sensor_row = []
+        for sensor in self.row:
+            sensor_sample = SensorSample()
+            sensor_sample.set_sample(*sensor)
+            sensor_row.append(sensor_sample)
+        
+        self.logs.appendleft(sensor_row)
+
+class TrigEvaluationManager:
+    def __init__(self,):
+         self.max_samples = 10
+         self.num_consecutive_trigs = 5
+         self.readout_frequency = 1 # Hz 
+         self.sensor_handler = SensorHandler(self.max_samples, self.num_consecutive_trigs)
+         self.verified_sensor_trig_state = []
+
+    def run(self):
+        while(True):
+            row = []
+            for sensor in self.sensor_handler.sensors:
+                row.append(sensor.get_sensor_data())
+            
+            self.sensor_handler.register_log_sample(row)
+            
+            print("-----")
+            for row in self.sensor_handler.logs:
+                print([
+                    (sample.timestamp, sample.trig_state)
+                    for sample in row
+            ])
+        
+            #self.verify_sensor_trig_states()
+            
+            time.sleep(1/self.readout_frequency)    # setting periodic time intervall for sensor readout
+
+    def verify_sensor_trig_states(self):
+        verified = []
+        for sensor in range(NUM_SENSORS):
+            recent = list(self.sensor_handler.logs[sensor])[:self.num_consecutive_trigs]
+        
+            if len(recent) < self.num_consecutive_trigs:
+                verified.append(SensorTrigState.UNKNOWN)
+                continue
+
+            first_state = recent[0].trig_state
+
+            stable = all(
+                sample.trig_state == first_state
+                for sample in recent
+            )
+            verified.append(first_state if stable else SensorTrigState.UNKNOWN)
+
+        self.verified_sensor_trig_state = verified
+        print(self.verified_sensor_trig_state)
+        
 
 
+test_obj = TrigEvaluationManager()
+test_obj.run()
 
-test = SensorHandler(2, 3, 5)
-
-for _ in range(2):
-    row = []
-    for sensor in test.sensors:
-        row.append(sensor.get_sensor_data())
-    
-    test.register_sample(row)
-
-print(test.sensor_sample_logs)
 
