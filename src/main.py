@@ -7,7 +7,6 @@ import adafruit_mcp3xxx.mcp3008 as MCP
 from adafruit_mcp3xxx.analog_in import AnalogIn
 import pwmio
 from enum import Enum
-#import numpy as np
 import logging
 from logging.handlers import RotatingFileHandler
 import mariadb
@@ -80,24 +79,21 @@ class SensorHandler:
         ]
 
         self.logs = deque(maxlen=self.max_samples)    # logs to store sensor samples in deque list
-        """
-        self.logs = deque(   # logs to store sensor samples in deque list
-            [
-                [SensorSample() for _ in range(NUM_SENSORS)]
-                for _ in range(self.max_samples)
-            ],
-            maxlen=self.max_samples)   
-        """
+
 
     def register_log_sample(self, row):
         self.row = row
         sensor_row = []
         for sensor in self.row:
             sensor_sample = SensorSample()
-            sensor_sample.set_sample(*sensor)
-            sensor_row.append(sensor_sample)
+            sensor_sample.set_sample(*sensor)   # store sensor data as SensorSample object
+            sensor_row.append(sensor_sample)    # add SensorSample object as columns in the same row
         
-        self.logs.appendleft(sensor_row)
+        self.logs.appendleft(sensor_row)    # store SensorSample data as a new row in the deque list
+
+    def reset_logs(self):
+        self.logs.clear()   # clear all logs
+        
 
 class TrigEvaluationManager:
     def __init__(self,):
@@ -110,45 +106,42 @@ class TrigEvaluationManager:
     def run(self):
         while(True):
             row = []
-            for sensor in self.sensor_handler.sensors:
+            for sensor in self.sensor_handler.sensors:  # read sensor and store data in a row with a column for each sensor
                 row.append(sensor.get_sensor_data())
-            
-            self.sensor_handler.register_log_sample(row)
+
+            self.sensor_handler.register_log_sample(row)    # store sensor data as a SensorSample object in a row with a column for each sensor in a deque list
             
             print("-----")
             for row in self.sensor_handler.logs:
                 print([
-                    (sample.timestamp, sample.trig_state)
+                    (sample.timestamp, sample.trig_state.name)
                     for sample in row
             ])
         
-            #self.verify_sensor_trig_states()
+            self.verify_sensor_trig_states()
             
             time.sleep(1/self.readout_frequency)    # setting periodic time intervall for sensor readout
 
     def verify_sensor_trig_states(self):
         verified = []
         for sensor in range(NUM_SENSORS):
-            recent = list(self.sensor_handler.logs[sensor])[:self.num_consecutive_trigs]
-        
+            recent = []
+            rows = list(self.sensor_handler.logs)[:self.num_consecutive_trigs]  # extract the latest num_consecutive_trigs log rows for this sensor
+            for row in rows:
+                recent.append(row[sensor])  # store the extracted rows for this sensor in the recent variable at index of the sensor
+             
             if len(recent) < self.num_consecutive_trigs:
                 verified.append(SensorTrigState.UNKNOWN)
                 continue
 
-            first_state = recent[0].trig_state
+            first_state = recent[0].trig_state  # get the trig_state of latest sensor read for this sensor
+            stable = all(sample.trig_state == first_state for sample in recent)     # check if all trig_states are equal as the latest
+            verified.append(first_state if stable else SensorTrigState.UNKNOWN)     # if all trig_states are equal append the identified trig_state to variable else append UNKNOWN trig_state
 
-            stable = all(
-                sample.trig_state == first_state
-                for sample in recent
-            )
-            verified.append(first_state if stable else SensorTrigState.UNKNOWN)
-
-        self.verified_sensor_trig_state = verified
-        print(self.verified_sensor_trig_state)
+        self.verified_sensor_trig_state = verified  # store the verified trig state for both sensors in one variable
+        print([state.name for state in self.verified_sensor_trig_state])
         
 
 
 test_obj = TrigEvaluationManager()
 test_obj.run()
-
-
