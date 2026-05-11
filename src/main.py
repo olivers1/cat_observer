@@ -26,6 +26,39 @@ mcp = MCP.MCP3008(spi, cs)  # create a mcp object
 
 NUM_SENSORS = 2
 
+# setup logging to files
+filename_debug = "debug.log"  #"/var/log/cat_observer_app/debug.log"  
+filename_info = "info.log"    #"/var/log/cat_observer_app/info.log"    
+# logging handlers
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)     # set the log level which is printed to terminal output
+
+file_handler_debug = RotatingFileHandler(
+    filename_debug,
+    mode="w",              # overwrite after rotation
+    maxBytes= 5 * 1024 * 1024,  # 5 MB
+    backupCount=5,         # keep 5 old file
+    encoding="utf-8"
+)
+file_handler_debug.setLevel(logging.DEBUG)
+
+file_handler_info = RotatingFileHandler(
+    filename_info,
+    mode='w',                  # overwrite after rotation
+    maxBytes=5 * 1024 * 1024,  # 5 MB max
+    backupCount=1,             # keep 1 old files
+    encoding='utf-8'
+)
+file_handler_info.setLevel(logging.INFO)
+
+# logging config
+logging.basicConfig(
+    level=logging.DEBUG, handlers=[console, file_handler_debug, file_handler_info],
+    style="{",
+    format="{asctime} - {funcName} - {levelname}: {message}",
+    )
+
+
 class SensorTrigState(Enum):
     NO_TRIG = 0
     TRIG = 1
@@ -95,13 +128,29 @@ class SensorHandler:
         self.logs.clear()   # clear all logs
         
 
+class AppLoggingState(Enum):
+    INIT = 0
+    IDLE = 1
+    LOG_START = 2
+    LOGGING = 3
+    LOG_STOP = 4
+    LOG_EVALUATION = 5
+
+
+class MovementDirection(Enum):
+    ENTRY = "ENTRY"
+    EXIT = "EXIT"
+    INVALID = "INVALID"
+
+
 class TrigEvaluationManager:
     def __init__(self,):
-         self.max_samples = 10
+         self.max_samples = 10000
          self.num_consecutive_trigs = 5
          self.readout_frequency = 1 # Hz 
          self.sensor_handler = SensorHandler(self.max_samples, self.num_consecutive_trigs)
          self.verified_sensor_trig_state = []
+         self.prev_verified_sensor_trig_state = [SensorTrigState.UNKNOWN, SensorTrigState.UNKNOWN]
 
     def run(self):
         while(True):
@@ -119,7 +168,6 @@ class TrigEvaluationManager:
             ])
         
             self.verify_sensor_trig_states()
-            
             time.sleep(1/self.readout_frequency)    # setting periodic time intervall for sensor readout
 
     def verify_sensor_trig_states(self):
@@ -140,6 +188,11 @@ class TrigEvaluationManager:
 
         self.verified_sensor_trig_state = verified  # store the verified trig state for both sensors in one variable
         print([state.name for state in self.verified_sensor_trig_state])
+
+        new_state = self.verified_sensor_trig_state
+        if new_state != self.prev_verified_sensor_trig_state:
+            logging.info("verified_sensor_trig_state Transition: %s → %s", [sensor_id.name for sensor_id in self.prev_verified_sensor_trig_state] , [sensor_id.name for sensor_id in new_state])
+            self.prev_verified_sensor_trig_state = new_state.copy()
         
 
 
