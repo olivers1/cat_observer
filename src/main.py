@@ -128,6 +128,13 @@ class SensorHandler:
         self.logs.clear()   # clear all logs
         
 
+class SensorsState(Enum):
+    NO_TRIG = 0
+    EXACTLY_ONE_TRIG = 1
+    ALL_TRIG = 2
+    UNKNOWN = 3
+
+
 class AppLoggingState(Enum):
     INIT = 0
     IDLE = 1
@@ -151,6 +158,8 @@ class TrigEvaluationManager:
          self.sensor_handler = SensorHandler(self.max_samples, self.num_consecutive_trigs)
          self.verified_sensor_trig_state = []
          self.prev_verified_sensor_trig_state = [SensorTrigState.UNKNOWN, SensorTrigState.UNKNOWN]
+         self.current_state = AppLoggingState.INIT  # keeps track of current app logging state
+         self.previous_state = AppLoggingState.INIT # keeps track of the previous app logging state
 
     def run(self):
         while(True):
@@ -169,6 +178,9 @@ class TrigEvaluationManager:
         
             self.verify_sensor_trig_states()
             time.sleep(1/self.readout_frequency)    # setting periodic time intervall for sensor readout
+
+            self.update_logging_state()
+            logging.debug("current_state: %s", self.current_state.name)
 
     def verify_sensor_trig_states(self):
         verified = []
@@ -193,6 +205,47 @@ class TrigEvaluationManager:
         if new_state != self.prev_verified_sensor_trig_state:
             logging.info("verified_sensor_trig_state Transition: %s → %s", [sensor_id.name for sensor_id in self.prev_verified_sensor_trig_state] , [sensor_id.name for sensor_id in new_state])
             self.prev_verified_sensor_trig_state = new_state.copy()
+
+    def update_sensors_state(self):
+        sensors_state = SensorsState.UNKNOWN
+        if all(s == SensorTrigState.NO_TRIG for s in self.verified_sensor_trig_state):
+            sensors_state = SensorsState.NO_TRIG
+        elif sum(s == SensorTrigState.TRIG for s in self.verified_sensor_trig_state) == 1:
+            sensors_state = SensorsState.EXACTLY_ONE_TRIG
+        elif all(s == SensorTrigState.TRIG for s in self.verified_sensor_trig_state):
+            sensors_state = SensorsState.ALL_TRIG
+        return sensors_state
+    
+    def update_logging_state(self):
+        sensors_state = self.update_sensors_state()
+
+        if self.current_state == AppLoggingState.INIT:
+            if sensors_state == SensorsState.NO_TRIG:
+                self.enter_state(AppLoggingState.IDLE)
+        
+        elif self.current_state == AppLoggingState.IDLE:
+            if sensors_state == SensorsState.EXACTLY_ONE_TRIG:
+                # Detect which sensor triggered first
+                #self.first_trig_sensor_id = self.verified_sensor_trig_state.index(SensorTrigState.TRIG)
+                self.enter_state(AppLoggingState.LOG_START)
+
+            elif sensors_state == SensorsState.ALL_TRIG:
+                #self.first_trig_sensor_id = None    # both sensors trigged at the same time → INVALID
+                self.enter_state(AppLoggingState.LOG_START)
+
+            elif sensors_state == SensorsState.NO_TRIG:
+                self.sensor_handler.reset_logs()    # clear logs
+    
+    def enter_state(self, new_state):
+        if new_state == self.current_state:     # no state change since current state is same as new state
+           return
+        
+        logging.info("AppLoggingState Transition: %s → %s",
+            self.current_state.name,
+            new_state.name)
+        
+        self.previous_state = self.current_state
+        self.current_state = new_state
         
 
 
