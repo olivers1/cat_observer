@@ -126,6 +126,7 @@ class SensorHandler:
 
     def reset_logs(self):
         self.logs.clear()   # clear all logs
+        logging.debug("logs cleared")
         
 
 class SensorsState(Enum):
@@ -169,12 +170,24 @@ class TrigEvaluationManager:
 
             self.sensor_handler.register_log_sample(row)    # store sensor data as a SensorSample object in a row with a column for each sensor in a deque list
             
+            print("\n----- Latest 5 log rows -----")
+            for row in list(self.sensor_handler.logs)[:self.num_consecutive_trigs]:
+
+                print([
+                    (
+                        sample.timestamp,
+                        sample.trig_state.name
+                    )
+                    for sample in row
+                ])
+            """
             print("-----")
             for row in self.sensor_handler.logs:
                 print([
                     (sample.timestamp, sample.trig_state.name)
                     for sample in row
             ])
+            """
         
             self.verify_sensor_trig_states()
             time.sleep(1/self.readout_frequency)    # setting periodic time intervall for sensor readout
@@ -205,6 +218,7 @@ class TrigEvaluationManager:
         if new_state != self.prev_verified_sensor_trig_state:
             logging.info("verified_sensor_trig_state Transition: %s → %s", [sensor_id.name for sensor_id in self.prev_verified_sensor_trig_state] , [sensor_id.name for sensor_id in new_state])
             self.prev_verified_sensor_trig_state = new_state.copy()
+            
 
     def update_sensors_state(self):
         sensors_state = SensorsState.UNKNOWN
@@ -214,6 +228,7 @@ class TrigEvaluationManager:
             sensors_state = SensorsState.EXACTLY_ONE_TRIG
         elif all(s == SensorTrigState.TRIG for s in self.verified_sensor_trig_state):
             sensors_state = SensorsState.ALL_TRIG
+        logging.info("sensor_state: %s", sensors_state.name)
         return sensors_state
     
     def update_logging_state(self):
@@ -234,7 +249,27 @@ class TrigEvaluationManager:
                 self.enter_state(AppLoggingState.LOG_START)
 
             elif sensors_state == SensorsState.NO_TRIG:
-                self.sensor_handler.reset_logs()    # clear logs
+                pass
+                #self.sensor_handler.reset_logs()    # clear logs
+        
+        elif self.current_state == AppLoggingState.LOG_START:
+            self.enter_state(AppLoggingState.LOGGING)   # change logging state to "logging"
+
+        elif self.current_state == AppLoggingState.LOGGING:
+            if sensors_state == SensorsState.NO_TRIG:
+                pass
+
+            elif sensors_state == SensorsState.EXACTLY_ONE_TRIG:
+                pass
+            
+            elif sensors_state == SensorsState.ALL_TRIG:
+                pass
+
+        elif self.current_state == AppLoggingState.LOG_STOP:
+            self.enter_state(AppLoggingState.LOG_EVALUATION)
+
+        elif self.current_state == AppLoggingState.LOG_EVALUATION:
+            self.enter_state(AppLoggingState.INIT)
     
     def enter_state(self, new_state):
         if new_state == self.current_state:     # no state change since current state is same as new state
